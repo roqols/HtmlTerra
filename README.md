@@ -2,7 +2,7 @@
 
 > Quiz de geografia mundial em HTML single-file. Sem instalação — jogue direto no navegador.
 >
-> 🔗 **[Jogar agora → roqols.github.io/HtmlTerra](https://roqols.github.io/htmlterra)**
+> 🔗 **[Jogar agora → roqols.github.io/HtmlTerra](https://roqols.github.io/HtmlTerra/htmlterra)**
 
 ---
 
@@ -69,11 +69,8 @@ O jogo roda direto no GitHub Pages — sem backend, sem build step.
 
 ```
 Repositório: https://github.com/roqols/HtmlTerra
-Jogo:        https://roqols.github.io/HtmlTerra
+Jogo:        https://roqols.github.io/HtmlTerra/htmlterra
 ```
-
-Basta fazer upload do `index.html` (renomeie o `htmlterra.html` para `index.html`) e ativar o GitHub Pages nas configurações do repositório apontando para a branch `main`.
-
 ---
 
 *Single-file game · Sem backend · Sem build step*
