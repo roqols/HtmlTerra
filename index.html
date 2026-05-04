@@ -338,6 +338,7 @@ body{background:var(--bg);color:var(--text);font-family:'Space Mono',monospace;h
       <div class="h-score-lbl">/ <span id="score-tot">195</span> países</div>
     </div>
     <div class="h-controls">
+      <button class="ctrl-btn" id="tooltip-btn" onclick="toggleTooltip()">👁 NOMES: OFF</button>
       <button class="ctrl-btn" id="pause-btn" onclick="togglePause()">⏸ PAUSAR</button>
       <button class="ctrl-btn" onclick="goSetup()">↩ MENU</button>
     </div>
@@ -654,12 +655,23 @@ let pathsMap = {};     // id → SVG path element
 let worldLoaded = false;
 let gameActive = false;
 let wrongTimeout = null;
+let tooltipEnabled = false; // tooltip OFF by default
 
 function adjTime(delta){
   const el = document.getElementById('time-input');
   let v = parseInt(el.value)||15;
   v = Math.max(1, Math.min(120, v + delta));
   el.value = v;
+}
+
+function toggleTooltip(){
+  tooltipEnabled = !tooltipEnabled;
+  const btn = document.getElementById('tooltip-btn');
+  btn.textContent = tooltipEnabled ? '👁 NOMES: ON' : '👁 NOMES: OFF';
+  btn.style.borderColor = tooltipEnabled ? 'var(--gold)' : '';
+  btn.style.color = tooltipEnabled ? 'var(--gold)' : '';
+  // Hide tooltip immediately if turning off
+  if(!tooltipEnabled) document.getElementById('tip').style.opacity = '0';
 }
 
 function goSetup(){
@@ -690,6 +702,11 @@ function startGame(){
   document.getElementById('cinput').value = '';
   document.getElementById('cinput').className = '';
   updateTimer();
+
+  // Reset tooltip to OFF
+  tooltipEnabled = false;
+  const ttBtn = document.getElementById('tooltip-btn');
+  if(ttBtn){ ttBtn.textContent = '👁 NOMES: OFF'; ttBtn.style.borderColor=''; ttBtn.style.color=''; }
 
   // Reset map
   for(const p of Object.values(pathsMap)){
@@ -785,8 +802,13 @@ function tryAnswer(){
   }
 }
 
-// Countries too small to appear on 110m map
-const NO_MAP_COUNTRIES = new Set([492,336,702,520,462,690,480,438,674,678,212,659,662,670,308,52,388,780,798,776,882,584,585,583,296,174,132,383,630]);
+// Kosovo: world-atlas 110m uses numeric id -99 for Kosovo (unrecognized by UN ISO)
+// We map that special id to our internal id 383
+const KOSOVO_MAP_ID = -99;
+const KOSOVO_INTERNAL_ID = 383;
+
+// Countries too small to appear on 110m map (Kosovo removed — it IS visible as id -99)
+const NO_MAP_COUNTRIES = new Set([492,336,702,520,462,690,480,438,674,678,212,659,662,670,308,52,388,780,798,776,882,584,585,583,296,174,132,630]);
 
 function registerFound(id, name){
   found.add(id);
@@ -893,22 +915,35 @@ async function loadMap(){
       .attr('class','country-path')
       .attr('d', pathGen)
       .each(function(d){
-        const id = d.id ? parseInt(d.id) : null;
-        if(id && ALL_COUNTRIES[id]){
-          pathsMap[id] = this;
-          if(found.has(id)) this.classList.add('found');
+        const rawId = (d.id !== undefined && d.id !== null) ? parseInt(d.id) : null;
+        let internalId = (rawId !== null && !isNaN(rawId) && ALL_COUNTRIES[rawId]) ? rawId : null;
+        // Kosovo has id=undefined in world-atlas; detect by centroid (~42.6°N, 20.9°E)
+        if(internalId === null){
+          try {
+            const c = d3.geoCentroid(d);
+            if(c[1] > 41 && c[1] < 44 && c[0] > 19 && c[0] < 22){
+              internalId = KOSOVO_INTERNAL_ID;
+            }
+          } catch(e){}
+        }
+        this._internalId = internalId;
+        if(internalId !== null){
+          pathsMap[internalId] = this;
+          if(found.has(internalId)) this.classList.add('found');
         }
       })
-      .on('mousemove', function(event, d){
-        const id = d.id ? parseInt(d.id) : null;
-        let label = id && ALL_COUNTRIES[id] ? ALL_COUNTRIES[id] : '';
+      .on('mousemove', function(event){
+        if(!tooltipEnabled) return;
+        const internalId = this._internalId;
+        if(internalId === null || internalId === undefined) return;
+        const label = ALL_COUNTRIES[internalId];
         if(!label) return;
         const [mx, my] = d3.pointer(event, container);
         tip.style.opacity = '1';
         tip.style.left = (mx + 12) + 'px';
         tip.style.top  = (my - 28) + 'px';
-        tip.textContent = found.has(parseInt(id)) ? '✓ ' + label : label;
-        tip.style.color = found.has(parseInt(id)) ? 'var(--correct)' : 'var(--text)';
+        tip.textContent = found.has(internalId) ? '✓ ' + label : label;
+        tip.style.color = found.has(internalId) ? 'var(--correct)' : 'var(--text)';
       })
       .on('mouseleave', () => { tip.style.opacity='0'; });
 
