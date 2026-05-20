@@ -614,12 +614,10 @@ const RAW = {
   583:{n:"Micronésia",        a:["micronesia"]},
   296:{n:"Kiribati",          a:[]},
   242:{n:"Fiji",              a:[]},
-  // Outras ilhas pequenas
-  174:{n:"Comores",           a:[]},
-  132:{n:"Cabo Verde",        a:[]},
-  678:{n:"São Tomé e Príncipe", a:["sao tome e principe","sao tome"]},
-  480:{n:"Maurício",          a:["mauricio"]},
-  690:{n:"Seicheles",         a:["seychelles"]},
+  // Territórios franceses — podem ser digitados individualmente OU descobertos ao digitar "França"
+  540:{n:"Nova Caledônia",      a:["nova caledonia"]},
+  254:{n:"Guiana Francesa",     a:["guiana francesa"]},
+  258:{n:"Polinésia Francesa",  a:["polinesia francesa","polinesia"]},
 };
 
 // Build normalized lookup: key → {id, displayName}
@@ -643,6 +641,13 @@ for(const [id, c] of Object.entries(RAW)){
   for(const a of c.a) addKey(a, c.n);
 }
 const TOTAL = Object.keys(ALL_COUNTRIES).length;
+
+// ── GRUPOS DE TERRITÓRIOS ─────────────────────────────────────────────────
+// Quando o país-pai é descoberto, seus territórios também são marcados automaticamente.
+// Os territórios também podem ser digitados individualmente.
+const TERRITORY_GROUPS = {
+  250: [540, 254, 258], // França → Nova Caledônia, Guiana Francesa, Polinésia Francesa
+};
 
 // ═══════════════════════════════════════════════
 // GAME STATE
@@ -709,8 +714,8 @@ function startGame(){
   if(ttBtn){ ttBtn.textContent = '👁 NOMES: OFF'; ttBtn.style.borderColor=''; ttBtn.style.color=''; }
 
   // Reset map
-  for(const p of Object.values(pathsMap)){
-    p.classList.remove('found');
+  for(const paths of Object.values(pathsMap)){
+    for(const p of paths) p.classList.remove('found');
   }
 
   clearInterval(interval);
@@ -807,18 +812,23 @@ function tryAnswer(){
 const KOSOVO_MAP_ID = -99;
 const KOSOVO_INTERNAL_ID = 383;
 
-// Countries too small to appear on 110m map (Kosovo removed — it IS visible as id -99)
-const NO_MAP_COUNTRIES = new Set([492,336,702,520,462,690,480,438,674,678,212,659,662,670,308,52,388,780,798,776,882,584,585,583,296,174,132,630]);
+// Países minúsculos sem marcador visual (Monaco, Vaticano, Singapura, Maldivas, Liechtenstein, San Marino)
+// Os demais países-ilha agora têm marcadores circulares no mapa
+const NO_MAP_COUNTRIES = new Set([492,336,702,462,438,674]);
 
 function registerFound(id, name){
   found.add(id);
   document.getElementById('cinput').value = '';
 
-  // Highlight map
-  if(pathsMap[id]){
-    pathsMap[id].classList.add('found');
-    pathsMap[id].style.filter = 'brightness(1.5)';
-    setTimeout(() => { if(pathsMap[id]) pathsMap[id].style.filter=''; }, 400);
+  // Highlight map — pathsMap[id] é agora um array (suporta múltiplos fragmentos por país)
+  if(pathsMap[id] && pathsMap[id].length){
+    for(const el of pathsMap[id]){
+      el.classList.add('found');
+      el.style.filter = 'brightness(1.5)';
+    }
+    setTimeout(() => {
+      if(pathsMap[id]) for(const el of pathsMap[id]) el.style.filter='';
+    }, 400);
   } else if(NO_MAP_COUNTRIES.has(id)){
     showNoMapToast(name);
   }
@@ -834,6 +844,15 @@ function registerFound(id, name){
   list.insertBefore(item, list.firstChild);
 
   flash('ok');
+
+  // Auto-descobrir territórios vinculados (ex: digitar França marca Nova Caledônia etc.)
+  if(TERRITORY_GROUPS[id]){
+    for(const tId of TERRITORY_GROUPS[id]){
+      if(!found.has(tId) && ALL_COUNTRIES[tId]){
+        registerFound(tId, ALL_COUNTRIES[tId]);
+      }
+    }
+  }
 }
 
 let toastTimeout;
@@ -926,9 +945,30 @@ async function loadMap(){
             }
           } catch(e){}
         }
+        // Somalilândia: aparece no world-atlas como feature separada sem ID reconhecido.
+        // Detectamos pelo centróide (~9-11°N, 44-49°E) e mapeamos para Somália (706).
+        if(internalId === null){
+          try {
+            const c = d3.geoCentroid(d);
+            if(c[1] > 7.5 && c[1] < 12 && c[0] > 43 && c[0] < 50){
+              internalId = 706;
+            }
+          } catch(e){}
+        }
+        // Nova Caledônia: ISO 540, mas fallback por centróide (~21°S, 165°E) se necessário
+        if(internalId === null){
+          try {
+            const c = d3.geoCentroid(d);
+            if(c[1] > -23 && c[1] < -19 && c[0] > 163 && c[0] < 168){
+              internalId = 540;
+            }
+          } catch(e){}
+        }
         this._internalId = internalId;
         if(internalId !== null){
-          pathsMap[internalId] = this;
+          // pathsMap armazena arrays para suportar países com múltiplas features (ex: Somália)
+          if(!pathsMap[internalId]) pathsMap[internalId] = [];
+          pathsMap[internalId].push(this);
           if(found.has(internalId)) this.classList.add('found');
         }
       })
@@ -954,6 +994,114 @@ async function loadMap(){
       .attr('stroke','rgba(30,58,95,.7)')
       .attr('stroke-width','.3')
       .attr('d', pathGen);
+
+    // ── TERRITÓRIOS OVERLAY ──────────────────────────────────────────────────
+    // Alguns territórios aparecem fundidos no polígono do país-pai no world-atlas.
+    // Renderizamos polígonos GeoJSON próprios por cima para identificá-los separadamente.
+    const OVERLAY_TERRITORIES = [
+      {
+        id: 254, // Guiana Francesa
+        geo: {
+          type: "Feature",
+          geometry: {
+            type: "Polygon",
+            coordinates: [[
+              [-54.49, 5.78],[-54.00, 5.85],[-53.50, 5.77],[-53.00, 5.65],
+              [-52.50, 5.27],[-52.10, 4.93],[-51.72, 4.38],[-51.63, 3.96],
+              [-51.90, 3.50],[-52.20, 2.96],[-52.56, 2.50],[-53.00, 2.20],
+              [-53.50, 2.02],[-54.10, 2.08],[-54.52, 2.47],[-54.52, 3.50],
+              [-54.40, 4.00],[-54.49, 5.78]
+            ]]
+          }
+        }
+      }
+    ];
+    for(const terr of OVERLAY_TERRITORIES){
+      const overPath = g.append('path')
+        .datum(terr.geo)
+        .attr('class', 'country-path')
+        .attr('d', pathGen);
+      const el = overPath.node();
+      el._internalId = terr.id;
+      if(!pathsMap[terr.id]) pathsMap[terr.id] = [];
+      pathsMap[terr.id].push(el);
+      if(found.has(terr.id)) el.classList.add('found');
+      overPath.on('mousemove', function(event){
+        if(!tooltipEnabled) return;
+        const label = ALL_COUNTRIES[terr.id];
+        if(!label) return;
+        const [mx, my] = d3.pointer(event, container);
+        tip.style.opacity = '1';
+        tip.style.left = (mx+12)+'px';
+        tip.style.top  = (my-28)+'px';
+        tip.textContent = found.has(terr.id) ? '✓ '+label : label;
+        tip.style.color = found.has(terr.id) ? 'var(--correct)' : 'var(--text)';
+      }).on('mouseleave', () => { tip.style.opacity='0'; });
+    }
+
+    // ── MARCADORES PARA PAÍSES-ILHA PEQUENOS ────────────────────────────────
+    // Raio exagerado intencionalmente para facilitar a visualização.
+    // A escala é quebrada propositalmente (esses países são muito menores na vida real).
+    const TINY_ISLANDS = [
+      // Oceania
+      {id:520, lon:166.93, lat:-0.52},   // Nauru
+      {id:296, lon:172.98, lat:1.42},    // Kiribati (Tarawa)
+      {id:584, lon:168.73, lat:7.13},    // Ilhas Marshall
+      {id:583, lon:158.25, lat:6.92},    // Micronésia
+      {id:585, lon:134.47, lat:7.52},    // Palau
+      {id:548, lon:167.0,  lat:-15.4},   // Vanuatu
+      {id:776, lon:-175.2, lat:-21.2},   // Tonga
+      {id:882, lon:-172.1, lat:-13.8},   // Samoa
+      {id:798, lon:179.2,  lat:-8.52},   // Tuvalu
+      // Caribe
+      {id:659, lon:-62.7,  lat:17.35},   // São Cristóvão e Névis
+      {id:662, lon:-61.0,  lat:13.9},    // Santa Lúcia
+      {id:670, lon:-61.2,  lat:13.15},   // São Vicente e Granadinas
+      {id:308, lon:-61.7,  lat:12.1},    // Granada
+      {id:212, lon:-61.37, lat:15.41},   // Dominica
+      {id:28,  lon:-61.8,  lat:17.1},    // Antígua e Barbuda
+      {id:52,  lon:-59.55, lat:13.18},   // Barbados
+      {id:780, lon:-61.2,  lat:10.65},   // Trinidad e Tobago
+      {id:388, lon:-77.3,  lat:18.1},    // Jamaica
+      // Oceano Índico / Atlântico Sul
+      {id:174, lon:43.9,   lat:-11.7},   // Comores
+      {id:132, lon:-23.6,  lat:15.12},   // Cabo Verde
+      {id:678, lon:6.6,    lat:0.19},    // São Tomé e Príncipe
+      {id:690, lon:55.45,  lat:-4.62},   // Seicheles
+      {id:480, lon:57.55,  lat:-20.3},   // Maurício
+      // Territórios franceses
+      {id:258, lon:-149.5, lat:-17.6},   // Polinésia Francesa (Tahiti)
+    ];
+
+    for(const isle of TINY_ISLANDS){
+      // Só adiciona círculo se o país ainda não aparece no TopoJSON 110m
+      if(pathsMap[isle.id] && pathsMap[isle.id].length) continue;
+      const proj = projection([isle.lon, isle.lat]);
+      if(!proj || isNaN(proj[0]) || isNaN(proj[1])) continue;
+      const [px, py] = proj;
+      const circ = g.append('circle')
+        .attr('cx', px).attr('cy', py)
+        .attr('r', 1)
+        .attr('class', 'country-path')
+        .attr('stroke-width', '.6px');
+      const el = circ.node();
+      el._internalId = isle.id;
+      if(!pathsMap[isle.id]) pathsMap[isle.id] = [];
+      pathsMap[isle.id].push(el);
+      if(found.has(isle.id)) el.classList.add('found');
+      // Tooltip igual ao dos países normais
+      circ.on('mousemove', function(event){
+        if(!tooltipEnabled) return;
+        const label = ALL_COUNTRIES[isle.id];
+        if(!label) return;
+        const [mx, my] = d3.pointer(event, container);
+        tip.style.opacity = '1';
+        tip.style.left = (mx+12)+'px';
+        tip.style.top  = (my-28)+'px';
+        tip.textContent = found.has(isle.id) ? '✓ '+label : label;
+        tip.style.color = found.has(isle.id) ? 'var(--correct)' : 'var(--text)';
+      }).on('mouseleave', () => { tip.style.opacity='0'; });
+    }
 
     // Zoom & pan
     const zoom = d3.zoom()
